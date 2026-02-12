@@ -8,15 +8,21 @@ A Claude Code skill that converts any WordPress website to a static site and dep
 
 ### 1. Install the skill
 
-Copy the `.claude/commands/wp-to-static.md` file into your project's `.claude/commands/` directory:
+**Via ClawHub (recommended):**
 
 ```bash
-mkdir -p .claude/commands
-curl -o .claude/commands/wp-to-static.md \
-  https://raw.githubusercontent.com/abhibavishi/wp-to-static/main/.claude/commands/wp-to-static.md
+clawhub install wp-to-static
 ```
 
-Or clone this repo and copy the file manually.
+Browse it on ClawHub: [clawhub.ai/skills/wp-to-static](https://clawhub.ai/skills/wp-to-static)
+
+**Via Claude Code (manual):**
+
+```bash
+mkdir -p .claude/skills/wp-to-static
+curl -o .claude/skills/wp-to-static/SKILL.md \
+  https://raw.githubusercontent.com/abhibavishi/wp-to-static/main/skills/wp-to-static/SKILL.md
+```
 
 ### 2. Set up your SSH key
 
