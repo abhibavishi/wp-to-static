@@ -106,15 +106,25 @@ If `wget` is not available on the server, fall back to `curl` locally for render
 
 ## Step 4: Rsync to Local
 
-Create `./build/site` (NEVER use the project root as temp dir):
+Create `./build/site` (NEVER use the project root as temp dir).
+
+**Exclude server-side code and sensitive files.** Only static assets (images, CSS, JS, fonts) are needed. PHP files, config files, and other server-side code must NEVER be downloaded.
 
 ```bash
-rsync -avz server:/tmp/static_mirror/DOMAIN/ ./build/site/
-rsync -avz server:$WP_ROOT/wp-content/uploads/ ./build/site/wp-content/uploads/
-rsync -avz server:$WP_ROOT/wp-content/themes/ ./build/site/wp-content/themes/
-rsync -avz server:$WP_ROOT/wp-content/plugins/ ./build/site/wp-content/plugins/
-rsync -avz server:$WP_ROOT/wp-includes/ ./build/site/wp-includes/
+RSYNC_EXCLUDE="--exclude='*.php' --exclude='wp-config*' --exclude='.htaccess' --exclude='*.sql' --exclude='*.log' --exclude='debug.log' --exclude='error_log' --exclude='.env' --exclude='*.bak' --exclude='*.backup'"
+
+rsync -avz $RSYNC_EXCLUDE server:/tmp/static_mirror/DOMAIN/ ./build/site/
+rsync -avz $RSYNC_EXCLUDE server:$WP_ROOT/wp-content/uploads/ ./build/site/wp-content/uploads/
+rsync -avz $RSYNC_EXCLUDE server:$WP_ROOT/wp-content/themes/ ./build/site/wp-content/themes/
+rsync -avz $RSYNC_EXCLUDE server:$WP_ROOT/wp-content/plugins/ ./build/site/wp-content/plugins/
+rsync -avz $RSYNC_EXCLUDE server:$WP_ROOT/wp-includes/ ./build/site/wp-includes/
 ```
+
+After rsync, verify no PHP or config files were downloaded:
+```bash
+find ./build/site -name '*.php' -o -name 'wp-config*' -o -name '.htaccess' -o -name '.env' | head -20
+```
+If any are found, delete them before proceeding.
 
 ## Step 5: Extract Only Referenced Assets
 
@@ -168,9 +178,22 @@ Create `./public/_redirects` redirecting `/wp-admin/*`, `/wp-login.php`, `/xmlrp
 3. Tell user to open the URL and visually verify
 4. **Wait for user confirmation before deploying**
 
-## Step 10: Deploy
+## Step 10: Scrub Temporary Files and Deploy
 
-1. `git init`, commit `./public/` and `.gitignore`
+**Before any git operations**, remove the `./build/` directory to ensure no server-side code, PHP files, or sensitive data can accidentally be committed:
+
+```bash
+rm -rf ./build
+```
+
+Verify only `./public/` remains and contains no PHP or config files:
+```bash
+find ./public -name '*.php' -o -name 'wp-config*' -o -name '.htaccess' -o -name '.env'
+```
+This must return empty. If not, delete those files before proceeding.
+
+Then deploy:
+1. `git init`, commit ONLY `./public/` and `.gitignore`
 2. `git config http.postBuffer 524288000` (for binary assets)
 3. `gh repo create $WP_SITE_NAME --private --source=. --push`
 4. `CLOUDFLARE_ACCOUNT_ID=$CF_ACCOUNT_ID wrangler pages project create $WP_SITE_NAME --production-branch main`
@@ -185,6 +208,8 @@ Create `./public/_redirects` redirecting `/wp-admin/*`, `/wp-login.php`, `/xmlrp
 - NEVER pass passphrases as command-line arguments or environment variables at runtime
 - NEVER delete the current working directory (breaks the shell CWD)
 - NEVER force-push or use destructive git commands
-- Use `./build/` for temp files, `./public/` for output
-- Clean up `./build/` only AFTER successful deploy
+- NEVER rsync PHP files, wp-config, .htaccess, .env, or SQL dumps from the server
+- Use `./build/` for temp files, `./public/` for output — only `./public/` is committed
+- ALWAYS delete `./build/` BEFORE any git operations to prevent accidental commits of server-side files
+- Verify `./public/` contains no PHP or config files before committing
 - Stop and report on any failure — do NOT retry blindly
