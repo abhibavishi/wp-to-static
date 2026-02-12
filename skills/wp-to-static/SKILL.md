@@ -4,52 +4,85 @@ description: Convert a WordPress website to a static site and deploy to Cloudfla
 disable-model-invocation: true
 argument-hint: "[site-url]"
 allowed-tools: Bash, Read, Write, Edit, Grep, Glob, Task, WebFetch
-metadata: {"openclaw":{"requires":{"bins":["ssh","rsync","curl","git","gh","wrangler","expect"],"env":["WP_SSH_HOST","WP_SSH_USER","WP_SSH_PORT","WP_SSH_KEY","WP_SITE_URL","WP_SITE_NAME"]},"emoji":"🔄","os":["darwin","linux"]}}
+metadata: {"openclaw":{"requires":{"bins":["ssh","ssh-agent","rsync","curl","git","gh","wrangler"],"env":["WP_SSH_HOST","WP_SSH_USER","WP_SSH_PORT","WP_SSH_KEY","WP_SITE_URL","WP_SITE_NAME"]},"emoji":"🔄","os":["darwin","linux"]}}
 ---
 
 # WordPress to Static Site (Cloudflare Pages)
 
 Convert a WordPress website to a pixel-perfect static site and deploy it to Cloudflare Pages. Zero attack surface, zero hosting cost, instant load times.
 
+## Prerequisites
+
+Before running this skill, the user MUST have:
+
+1. **GitHub CLI authenticated:** Run `gh auth status` to verify. If not logged in, run `gh auth login` first.
+2. **Cloudflare Wrangler authenticated:** Run `wrangler whoami` to verify. If not logged in, run `wrangler login` first.
+3. **SSH key added to ssh-agent:** The recommended way to handle SSH keys. Run:
+   ```bash
+   eval "$(ssh-agent -s)"
+   ssh-add ~/.ssh/your_wp_key
+   ```
+4. **Server host key verified:** The user should have connected to the server at least once and accepted the host key, so it exists in `~/.ssh/known_hosts`.
+
 ## Environment Variables
 
-**Required** (stop and ask if missing):
+**Required** (stop and ask if any are missing):
 - `WP_SSH_HOST` — SSH hostname (e.g., `ssh.example.com`)
 - `WP_SSH_USER` — SSH username
 - `WP_SSH_PORT` — SSH port (e.g., `18765`)
-- `WP_SSH_KEY` — Path to SSH private key file (e.g., `~/.ssh/wp_key`)
+- `WP_SSH_KEY` — Path to SSH private key file (e.g., `~/.ssh/wp_key`). Key must have `chmod 600` permissions.
 - `WP_SITE_URL` — WordPress site URL (e.g., `https://example.com`)
 - `WP_SITE_NAME` — Short project name (e.g., `mysite`)
 
 **Optional:**
-- `WP_SSH_PASSPHRASE` — SSH key passphrase (leave empty if none)
 - `CF_ACCOUNT_ID` — Cloudflare account ID for Pages deployment
 - `GH_REPO_VISIBILITY` — `private` (default) or `public`
 
-**SECURITY: NEVER log, echo, or display credential values.**
+## Security Model
+
+- SSH authentication uses `ssh-agent` — keys are loaded into the agent before running, so no passphrase is passed via environment variables or command arguments
+- SSH host key verification is ENABLED (no `StrictHostKeyChecking=no`) — the server must already be in `~/.ssh/known_hosts`
+- Credentials are NEVER logged, echoed, or displayed
+- Credentials are NEVER committed to git
+- GitHub repos are created as private by default
 
 ## Step 0: Validate
 
-Check all required env vars are set. Verify required binaries exist (`ssh`, `rsync`, `curl`, `git`, `gh`, `wrangler`, `expect`). Stop if anything is missing.
+1. Check all required env vars are set. If any are missing, stop and tell the user.
+2. Verify required binaries exist: `ssh`, `ssh-agent`, `rsync`, `curl`, `git`, `gh`, `wrangler`.
+3. Verify `gh auth status` succeeds. If not, tell user to run `gh auth login`.
+4. Verify `wrangler whoami` succeeds (if `CF_ACCOUNT_ID` is set). If not, tell user to run `wrangler login`.
+5. Verify SSH key file exists and has correct permissions (`chmod 600`).
+6. Stop if anything is missing.
 
 ## Step 1: Test SSH Connection
 
+Test the connection using the key from ssh-agent:
+
 ```bash
-expect -c "
-spawn ssh -i \$WP_SSH_KEY -p \$WP_SSH_PORT -o StrictHostKeyChecking=no \$WP_SSH_USER@\$WP_SSH_HOST \"echo connected\"
-expect {
-    \"passphrase\" { send \"\$WP_SSH_PASSPHRASE\r\"; exp_continue }
-    \"password\" { send \"\$WP_SSH_PASSPHRASE\r\"; exp_continue }
-    eof
-}
-"
+ssh -i $WP_SSH_KEY -p $WP_SSH_PORT $WP_SSH_USER@$WP_SSH_HOST "echo connected"
 ```
 
-If connection fails, stop and report the error.
+If the key requires a passphrase and ssh-agent is not loaded, tell the user:
+```
+Please add your SSH key to ssh-agent first:
+  eval "$(ssh-agent -s)"
+  ssh-add /path/to/your/key
+Then re-run /wp-to-static
+```
+
+If the host key is not recognized, tell the user to connect manually once first to verify and accept the host key:
+```
+Please connect to the server once manually to verify the host key:
+  ssh -i $WP_SSH_KEY -p $WP_SSH_PORT $WP_SSH_USER@$WP_SSH_HOST
+Accept the host key, then re-run /wp-to-static
+```
+
+Do NOT use `StrictHostKeyChecking=no`. Do NOT bypass host key verification.
 
 ## Step 2: Locate WordPress Installation
 
-SSH in and find the `public_html` directory. Common locations:
+SSH in and find the WordPress `public_html` directory. Common locations:
 - `~/www/DOMAIN/public_html/`
 - `~/public_html/`
 - `~/htdocs/`
@@ -69,7 +102,7 @@ wget --mirror --convert-links --adjust-extension --page-requisites --no-parent \
   $WP_SITE_URL/ 2>&1 | tail -30
 ```
 
-If `wget` is not on the server, use `curl` locally for the rendered HTML instead.
+If `wget` is not available on the server, fall back to `curl` locally for rendered HTML.
 
 ## Step 4: Rsync to Local
 
@@ -147,7 +180,9 @@ Create `./public/_redirects` redirecting `/wp-admin/*`, `/wp-login.php`, `/xmlrp
 ## Safety Rules
 
 - NEVER display or log credentials (SSH keys, passphrases, tokens)
-- NEVER commit credentials to git
+- NEVER commit credentials to git (.gitignore must exclude .env, *.key, *.pem)
+- NEVER use `StrictHostKeyChecking=no` or bypass SSH host verification
+- NEVER pass passphrases as command-line arguments or environment variables at runtime
 - NEVER delete the current working directory (breaks the shell CWD)
 - NEVER force-push or use destructive git commands
 - Use `./build/` for temp files, `./public/` for output
